@@ -172,109 +172,119 @@
     <script src="fire.js"></script>
     <script>
     $(document).ready(function() {
-        const cv = $("canvas").get(0);
-        const context = cv.getContext("2d");
+    /* --- 1. 原有的初始化 --- */
+    const cv = $("canvas").get(0);
+    const context = cv.getContext("2d");
 
-        const sounds = {
-            background: new Audio("background.mp3"),
-            collect: new Audio("collect.mp3"),
-            gameover: new Audio("gameover.mp3")
+    const sounds = {
+        background: new Audio("background.mp3"),
+        collect: new Audio("collect.mp3"),
+        gameover: new Audio("gameover.mp3")
+    };
+
+    const totalGameTime = 20;
+    const gemMaxAge = 3000;
+    let gameStartTime = 0;
+    let collectedGems = 0;
+    let isGameRunning = false; // 新增：判斷遊戲是否正在進行
+
+    const gameArea = BoundingBox(context, 165, 60, 420, 800);
+    const player = Player(context, 427, 240, gameArea);
+    const gem = Gem(context, 427, 350, "green");
+    const fires = [
+        Fire(context, 60, 165),
+        Fire(context, 800, 165),
+        Fire(context, 60, 420),
+        Fire(context, 800, 420)
+    ];
+
+    /* --- 2. 觸控處理函數 (修正點：加入 mousedown 支援 & 確保全域可用) --- */
+    function bindInput(id, actionId) {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        // 啟動動作 (觸控 或 滑鼠按下)
+        const startAction = (e) => {
+            e.preventDefault();
+            if (!isGameRunning) return;
+            if (actionId === "speed") player.speedUp();
+            else player.move(actionId);
         };
 
-        const totalGameTime = 20;
-        const gemMaxAge = 3000;
-        let gameStartTime = 0;
-        let collectedGems = 0;
+        // 停止動作 (觸控結束 或 滑鼠放開)
+        const stopAction = (e) => {
+            e.preventDefault();
+            if (actionId === "speed") player.slowDown();
+            else player.stop(actionId);
+        };
 
-        const gameArea = BoundingBox(context, 165, 60, 420, 800);
-        const player = Player(context, 427, 240, gameArea);
-        const gem = Gem(context, 427, 350, "green");
-        const fires = [
-            Fire(context,60,165),
-            Fire(context,800,165),
-            Fire(context,60,420),
-            Fire(context,800,420)
-        ];
+        el.addEventListener("touchstart", startAction, { passive: false });
+        el.addEventListener("touchend", stopAction, { passive: false });
+        el.addEventListener("mousedown", startAction);
+        el.addEventListener("mouseup", stopAction);
+        el.addEventListener("mouseleave", stopAction); // 滑鼠移出按鈕也要停止
+    }
 
-        function doFrame(now) {
-            if (gameStartTime == 0) gameStartTime = now;
+    // 立即綁定，不等待 Click
+    bindInput("btn-left", 1);
+    bindInput("btn-up", 2);
+    bindInput("btn-right", 3);
+    bindInput("btn-down", 4);
+    bindInput("btn-speed", "speed");
 
-            const gameTimeSoFar = now - gameStartTime;
-            const timeRemaining = Math.ceil((totalGameTime * 1000 - gameTimeSoFar) / 1000);
-            $("#time-remaining").text(timeRemaining);
+    /* --- 3. 遊戲主迴圈 --- */
+    function doFrame(now) {
+        if (!isGameRunning) return;
+        if (gameStartTime == 0) gameStartTime = now;
 
-            if (timeRemaining <= 0) {
-                sounds.background.pause();
-                sounds.background.currentTime = 0;
-                $("#final-gems").text(collectedGems);
-                $("#game-over").show();
-                $("#controls").hide(); // 結束時隱藏按鈕
-                sounds.gameover.play();
-                return;
-            }
+        const gameTimeSoFar = now - gameStartTime;
+        const timeRemaining = Math.ceil((totalGameTime * 1000 - gameTimeSoFar) / 1000);
+        $("#time-remaining").text(timeRemaining);
 
-            gem.update(now);
-            player.update(now);
-            for (let i=0; i<4; i++) fires[i].update(now);
-
-            if (gem.getAge(now) > gemMaxAge) gem.randomize(gameArea);
-
-            const {x, y} = gem.getXY();
-            const box = player.getBoundingBox();
-            if (box.isPointInBox(x, y)) {
-                sounds.collect.play();
-                collectedGems++;
-                gem.randomize(gameArea);
-                sounds.collect.currentTime = 0;
-            }
-
-            context.clearRect(0, 0, cv.width, cv.height);
-            gem.draw();
-            player.draw();
-            for (let i=0; i<4; i++) fires[i].draw();
-            
-            requestAnimationFrame(doFrame);
+        if (timeRemaining <= 0) {
+            isGameRunning = false;
+            sounds.background.pause();
+            $("#final-gems").text(collectedGems);
+            $("#game-over").show();
+            $("#controls").hide();
+            sounds.gameover.play();
+            return;
         }
 
-        /* 觸控事件處理函數 */
-        function bindTouchAction(id, moveId) {
-            const el = document.getElementById(id);
-            
-            el.addEventListener("touchstart", function(e) {
-                e.preventDefault();
-                if (moveId === "speed") player.speedUp();
-                else player.move(moveId);
-            }, { passive: false });
+        gem.update(now);
+        player.update(now);
+        for (let i=0; i<4; i++) fires[i].update(now);
+        if (gem.getAge(now) > gemMaxAge) gem.randomize(gameArea);
 
-            el.addEventListener("touchend", function(e) {
-                e.preventDefault();
-                if (moveId === "speed") player.slowDown();
-                else player.stop(moveId);
-            }, { passive: false });
-
-            el.addEventListener("touchcancel", function(e) {
-                e.preventDefault();
-                if (moveId === "speed") player.slowDown();
-                else player.stop(moveId);
-            }, { passive: false });
-        }
-
-        $("#game-start").on("click", function() {
-            $("#game-start").hide();
-            $("#controls").show(); // 顯示觸控按鈕
-
-            /* 綁定觸控 (1:左, 2:上, 3:右, 4:下) */
-            bindTouchAction("btn-left", 1);
-            bindTouchAction("btn-up", 2);
-            bindTouchAction("btn-right", 3);
-            bindTouchAction("btn-down", 4);
-            bindTouchAction("btn-speed", "speed");
-
+        const {x, y} = gem.getXY();
+        const box = player.getBoundingBox();
+        if (box.isPointInBox(x, y)) {
+            sounds.collect.play();
+            collectedGems++;
             gem.randomize(gameArea);
-            sounds.background.play();
-            requestAnimationFrame(doFrame);
-        });
+            sounds.collect.currentTime = 0;
+        }
+
+        context.clearRect(0, 0, cv.width, cv.height);
+        gem.draw();
+        player.draw();
+        for (let i=0; i<4; i++) fires[i].draw();
+        
+        requestAnimationFrame(doFrame);
+    }
+
+    /* --- 4. 開始遊戲按鈕 --- */
+    $("#game-start").on("click touchstart", function(e) {
+        e.preventDefault();
+        isGameRunning = true;
+        $("#game-start").hide();
+        $("#controls").show();
+        
+        gem.randomize(gameArea);
+        sounds.background.play();
+        requestAnimationFrame(doFrame);
     });
+});
     </script>
 </body>
 </html>
